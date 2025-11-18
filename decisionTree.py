@@ -35,66 +35,8 @@ def calcGini(cntr: dict[int]) -> float:
         return 0
     return 1-sum((c/allVals)**2 for c in cntr.values() if c)
 
-def bestNumSplit(numVar: np.array,objVar: np.array, gainInfo=True) -> tuple[float,float]:
-    """Finds the best split given the stuff
-
-    Args:
-        numVar (np.array[float]): The array with all the numeric info
-        objVar (np.array[float]): The array with the objective variable
-        gainInfo (bool): If gain Info is used for findinf best split. Defaults to True.
-
-    Returns:
-        tuple[float,float]: Returns the best split value as well as the best Metric
-    """
-    data = pd.DataFrame({'numVar':numVar,'objVar':objVar}).sort_values(by='numVar') # Sort the data
-    rightCntr = defaultdict(int) # Create counters for calc Gini or Entropy
-    bestMetric = 0
-    best_split = numVar[0]
-    for c in objVar:
-        rightCntr[c] += 1 # Initializing Counter
-    totalVal = calcEntropy(rightCntr) if gainInfo else calcGini(rightCntr)
-    leftCntr = defaultdict(int)
-    leftSize, rightSize = 0,len(numVar)
-    for _, row in data.iterrows(): # Itering for every split
-        rightCntr[row['objVar']] -= 1 # Changing the counters
-        leftCntr[row['objVar']] += 1
-        leftSize += 1
-        rightSize -= 1
-        leftWeight = calcEntropy(leftCntr) if gainInfo else calcGini(leftCntr) # Calculating new Metric
-        rightWeight = calcEntropy(rightCntr) if gainInfo else calcGini(rightCntr)
-        if gainInfo:
-            auxGain = totalVal-(leftWeight*leftSize+rightWeight*rightSize)/len(numVar)
-        else:
-            auxGain = (leftWeight*leftSize+rightWeight*rightSize)/len(numVar)
-        if  (auxGain > bestMetric and gainInfo) or (auxGain < bestMetric and not(gainInfo)):
-            # IF metric is best change best metric
-            bestMetric = auxGain
-            best_split = row['numVar']
-
-    return best_split, bestMetric
-
-def bestCatSplit(catVar: np.array,objVar: np.array,gainInfo: bool = True) -> tuple[bool,float]:
-    """Takes in Count if it's a good variable to split as well as returning the gainInfo or the GiniIndex
-
-    Args:
-        catVar (np.array[float]): The array with all the categoric info
-        objVar (np.array[float]): The array with the objective variable
-        gainInfo (bool): If gain Info is used for findinf best split. Defaults to True.
-
-    Returns:
-        tuple[bool,float]: Tuple with a Bool representing if it's good for splitting and float as the metric Value
-    """
-    cntr = Counter(objVar)
-    catSets = [objVar[(catVar==c)] for c in np.unique(catVar)] # Get the unique sets for each category
-    catSizes = [len(s) for s in catSets] # Get the sizes
-    totalVal = calcEntropy(cntr) if gainInfo else calcGini(cntr) # Calc the initial Metric
-    newMetric = [calcEntropy(catSets[i]) if gainInfo else calcGini(catSets[i]) for i in range(len(catSets))] # Calculate
-    newVal = sum(newMetric[i]*catSizes[i] for i in range(len(catSizes)))/len(objVar) # new submetrics and create the 
-    result = [False,0]                                                               # final new Metric
-    if newMetric < totalVal: # Comparing if it's a better Metric
-        result[1] = totalVal-newVal if gainInfo else newVal
-        result[0] = True
-    return tuple(result)
+def mseMod(y):
+    return sum((y-np.mean(y))**2)
 
 class Leaf:
     def __init__(self, value):
@@ -124,17 +66,76 @@ class Node:
         return 'Node '+self.strCond
 
 class DecisionTreeClassifier:
-    def __init__(self, max_depth=None):
+    def __init__(self, max_depth=None, min_point=3):
         self.mxDp = max_depth
+        self.minPt = min_point
+    
+    def bestCatSplit(self ,catVar: np.array,objVar: np.array) -> tuple[str,float]:
+        cntr = Counter(objVar)
+        totalVal = calcEntropy(cntr) if self.asm else calcGini(cntr) # Calc the initial Metric
+        bestMetric = 0 if self.asm else 0.5
+        result = [False,bestMetric]   
+        if len(cntr) == 1:
+            return result
+        for c in np.unique(catVar):
+            left = catVar==c
+            right = catVar!=c
+            if sum(left) < self.minPt or sum(right) < self.minPt:
+                continue
+            leftCntr = Counter(objVar[left])
+            rightCntr = Counter(objVar[right])
+            leftSize, rightSize = sum(left), sum(right)
+            leftWeight = calcEntropy(leftCntr) if self.asm else calcGini(leftCntr) # Calculating new Metric
+            rightWeight = calcEntropy(rightCntr) if self.asm else calcGini(rightCntr)
+            auxGain = (leftWeight*leftSize+rightWeight*rightSize)/len(catVar)
+            if self.asm:
+                auxGain -= totalVal
+            if  (auxGain > bestMetric and self.asm) or (auxGain < bestMetric and not(self.asm)):
+                # IF metric is best change best metric
+                bestMetric = auxGain
+                result[0] = c
+                result[1] = bestMetric
+        return result
+
+    def bestNumSplit(self, numVar: np.array,objVar: np.array) -> tuple[float,float]:
+        data = pd.DataFrame({'numVar':numVar,'objVar':objVar}).sort_values(by='numVar') # Sort the data
+        rightCntr = defaultdict(int) # Create counters for calc Gini or Entropy
+        bestMetric = 0
+        best_split = numVar[0]
+        rightCntr = Counter(objVar)
+        totalVal = calcEntropy(rightCntr) if self.asm else calcGini(rightCntr)
+        leftCntr = defaultdict(int)
+        leftSize, rightSize = 0,len(numVar)
+        for _, row in data.iterrows(): # Itering for every split
+            rightCntr[row['objVar']] -= 1 # Changing the counters
+            leftCntr[row['objVar']] += 1
+            leftSize += 1
+            rightSize -= 1
+            if leftSize<self.minPt:
+                continue
+            elif rightSize < self.minPt:
+                break
+            leftWeight = calcEntropy(leftCntr) if self.asm else calcGini(leftCntr) # Calculating new Metric
+            rightWeight = calcEntropy(rightCntr) if self.asm else calcGini(rightCntr)
+            if self.asm:
+                auxGain = totalVal-(leftWeight*leftSize+rightWeight*rightSize)/len(numVar)
+            else:
+                auxGain = (leftWeight*leftSize+rightWeight*rightSize)/len(numVar)
+            if  (auxGain > bestMetric and self.asm) or (auxGain < bestMetric and not(self.asm)):
+                # IF metric is best change best metric
+                bestMetric = auxGain
+                best_split = row['numVar']
+
+        return best_split, bestMetric
 
     def findBestSplitter(self,X: np.array,y: np.array):
         totalMetrics = []
         for i in range(len(X[0])):
             column = X[:,i].flatten()
             if self.colTypes[i]=='cat':
-                totalMetrics.append(bestCatSplit(column,y,self.asm))
+                totalMetrics.append(self.bestCatSplit(column,y))
             else:
-                totalMetrics.append(bestNumSplit(column,y,self.asm))
+                totalMetrics.append(self.bestNumSplit(column,y,self.asm))
         return totalMetrics
 
     def _fit(self,X,y,depth = 0):
@@ -145,37 +146,25 @@ class DecisionTreeClassifier:
         splitInfo, splitValues = zip(*splitters)
         bestSplit = np.argmax(splitValues) if self.asm else np.argmin(splitValues)
         colInfo = X[:,bestSplit].flatten()
+
         ## Case when there worst splits
         if (splitValues[bestSplit]==0.5 and not(self.asm)) or (splitValues[bestSplit]==0 and self.asm) or depth==self.mxDp:
             self.depthCount[depth] = self.depthCount.get(depth,0)+1
             self.depthCount[depth+1] = self.depthCount.get(depth+1, 0)+1
             return [Node(lambda x: True,Leaf(mode(y)),strCond='MaxDepth' if depth==self.mxDp else 'No Split')]
 
+        bestVal = splitInfo[bestSplit] # The best Value
         ## Case for Basic Splits
 
-        if self.colTypes[bestSplit] == 'cat':
-            if not splitInfo[bestSplit]:
-                self.depthCount[depth] = self.depthCount.get(depth, 0)+1
-                self.depthCount[depth+1] = self.depthCount.get(depth+1, 0)+1
-                return [Node(lambda x: True,Leaf(mode(y)),strCond='No Split')]
-            retList = []
-            for c in np.unique(colInfo):
-                actualNode = Node(lambda x: x[bestSplit]==c, self._fit(X[(colInfo==c)],y[(colInfo==c)],depth+1),strCond=f'Column {bestSplit} == {c}') 
-                retList.append(actualNode)
-            self.depthCount[depth] = self.depthCount.get(depth, 0)+len(retList)
-            return retList
+        if self.colTypes[bestSplit] == 'cat': ## Binary Splitter
+            actualNode = Node(lambda x: x[bestSplit]==bestVal, self._fit(X[(colInfo==bestVal)],y[(colInfo==bestVal)],depth+1), strCond=f'Column {bestSplit} == {bestVal}')
+            oppositeNode = Node(lambda x: x[bestSplit]!=bestVal, self._fit(X[(colInfo!=bestVal)],y[(colInfo!=bestVal)],depth+1), strCond=f'Column {bestSplit} != {bestVal}')
         else:
-            bestVal = splitInfo[bestSplit]
-            if sum(colInfo>bestVal):
-                actualNode = Node(lambda x: x[bestSplit]<=bestVal, self._fit(X[(colInfo<=bestVal)],y[(colInfo<=bestVal)],depth+1), strCond=f'Column {bestSplit} <= {bestVal}')
-                oppositeNode = Node(lambda x: x[bestSplit]>bestVal, self._fit(X[(colInfo>bestVal)],y[(colInfo>bestVal)],depth+1), strCond=f'Column {bestSplit} > {bestVal}')
-                retList = [actualNode, oppositeNode]
-            else:
-                self.depthCount[depth] = self.depthCount.get(depth, 0)+1
-                self.depthCount[depth+1] = self.depthCount.get(depth+1, 0)+1
-                return [Node(lambda x: True, Leaf(mode(y)), strCond='No Split')]
-            self.depthCount[depth] = self.depthCount.get(depth, 0)+2
-            return retList
+            actualNode = Node(lambda x: x[bestSplit]<bestVal, self._fit(X[(colInfo<bestVal)],y[(colInfo<bestVal)],depth+1), strCond=f'Column {bestSplit} < {bestVal}')
+            oppositeNode = Node(lambda x: x[bestSplit]>=bestVal, self._fit(X[(colInfo>=bestVal)],y[(colInfo>=bestVal)],depth+1), strCond=f'Column {bestSplit} >= {bestVal}')
+            
+        self.depthCount[depth] = self.depthCount.get(depth, 0)+2
+        return [actualNode, oppositeNode]
 
 
     def createcolTypes(self,X):
@@ -214,7 +203,7 @@ class DecisionTreeClassifier:
         self._drawTree(self.model,ax,0)
         plt.show()
 
-    def _drawTree(self,node,ax,depth,lastCoords=False):
+    def _drawTree(self,node,ax,depth):
 
         xPos = (self.depthCount[depth]-self.depthCopy[depth]+1)*(self.depthAmpSize[depth])
         xPos += (self.depthCount[depth]-self.depthCopy[depth])*self.sqrSz
@@ -226,14 +215,158 @@ class DecisionTreeClassifier:
 
         if not isinstance(node,Leaf) and  not isinstance(node.next,Leaf):
             for n in node.next:
-                newCoords = self._drawTree(n, ax, depth+1, coords)
+                newCoords = self._drawTree(n, ax, depth+1)
                 ax.plot([xPos+self.sqrSz//2, newCoords[0]+self.sqrSz//2], [yPos+self.sqrSz, newCoords[1]], color='black')
         elif not isinstance(node, Leaf):
-            newCoords = self._drawTree(node.next,ax,depth+1,coords)
+            newCoords = self._drawTree(node.next,ax,depth+1)
             ax.plot([xPos+self.sqrSz//2,newCoords[0]+self.sqrSz//2],[yPos+self.sqrSz,newCoords[1]],color='black')
 
         return xPos,yPos
 
+class DecisionTreeRegressor:
+    def __init__(self, max_depth=None, min_point=3):
+        self.mxDp = max_depth
+        self.minPt = min_point
+
+    def bestCatSplit(self ,catVar: np.array,objVar: np.array) -> tuple[str,float]:
+        cntr = Counter(catVar)
+        totalVal = mseMod(objVar) if self.asm else np.var(objVar) # Calc the initial Metric
+        bestMetric = float('inf')
+        result = [False,totalVal]   
+        for c in cntr:
+            left = catVar==c
+            right = catVar!=c
+            if sum(left) < self.minPt or sum(right) < self.minPt:
+                continue
+            leftWeight = mseMod(objVar[left]) if self.asm else np.var(objVar[left]) # Calculating new Metric
+            rightWeight = mseMod(objVar[right]) if self.asm else np.var(objVar[right])
+    
+            if  leftWeight < totalVal and rightWeight < totalVal and np.mean([leftWeight,rightWeight])<bestMetric:
+                # IF metric is best change best metric
+                bestMetric = np.mean([leftWeight,rightWeight])
+                result[0] = c
+                result[1] = bestMetric
+        return result
+
+    def bestNumSplit(self, numVar: np.array,objVar: np.array) -> tuple[float,float]:
+        data = pd.DataFrame({'numVar':numVar,'objVar':objVar}).sort_values(by='numVar') # Sort the data
+        bestMetric = float('inf')
+        best_split = numVar[0]
+        totalVal = mseMod(objVar) if self.asm else np.var(objVar)
+
+        for _, row in data.iterrows(): # Itering for every split
+            left = data['numVar']<row['numVar']
+            right = data['numVar']>=row['numVar']
+            if sum(left)<self.minPt:
+                continue
+            elif sum(right) < self.minPt:
+                break
+
+            leftWeight = mseMod(objVar[left]) if self.asm else np.var(objVar[left]) # Calculating new Metric
+            rightWeight = mseMod(objVar[right]) if self.asm else np.var(objVar[right])
+    
+            if  leftWeight < totalVal and rightWeight < totalVal and np.mean([leftWeight,rightWeight])<bestMetric:
+                # IF metric is best change best metric
+                bestMetric = np.mean([leftWeight,rightWeight])
+                best_split = row['numVar']
+
+        return best_split, bestMetric
+
+    def findBestSplitter(self,X: np.array,y: np.array):
+        totalMetrics = []
+        for i in range(len(X[0])):
+            column = X[:,i].flatten()
+            if self.colTypes[i]=='cat':
+                totalMetrics.append(self.bestCatSplit(column,y))
+            else:
+                totalMetrics.append(self.bestNumSplit(column,y,self.asm))
+        return totalMetrics
+
+    def _fit(self,X,y,depth = 0):
+        if len(np.unique(y))==1:
+            self.depthCount[depth] = self.depthCount.get(depth, 0)+1
+            return Leaf(y[0])
+        worstSplit = mseMod(y) if self.asm else np.var(y)
+        splitters= self.findBestSplitter(X,y)
+        splitInfo, splitValues = zip(*splitters)
+        bestSplit = np.argmax(splitValues) if self.asm else np.argmin(splitValues)
+        colInfo = X[:,bestSplit].flatten()
+
+        ## Case when there worst splits
+        if splitValues[bestSplit]==worstSplit or depth==self.mxDp:
+            self.depthCount[depth] = self.depthCount.get(depth,0)+1
+            self.depthCount[depth+1] = self.depthCount.get(depth+1, 0)+1
+            return [Node(lambda x: True,Leaf(mode(y)),strCond='MaxDepth' if depth==self.mxDp else 'No Split')]
+
+        bestVal = splitInfo[bestSplit] # The best Value
+        ## Case for Basic Splits
+
+        if self.colTypes[bestSplit] == 'cat': ## Binary Splitter
+            actualNode = Node(lambda x: x[bestSplit]==bestVal, self._fit(X[(colInfo==bestVal)],y[(colInfo==bestVal)],depth+1), strCond=f'Column {bestSplit} == {bestVal}')
+            oppositeNode = Node(lambda x: x[bestSplit]!=bestVal, self._fit(X[(colInfo!=bestVal)],y[(colInfo!=bestVal)],depth+1), strCond=f'Column {bestSplit} != {bestVal}')
+        else:
+            actualNode = Node(lambda x: x[bestSplit]<bestVal, self._fit(X[(colInfo<bestVal)],y[(colInfo<bestVal)],depth+1), strCond=f'Column {bestSplit} < {bestVal}')
+            oppositeNode = Node(lambda x: x[bestSplit]>=bestVal, self._fit(X[(colInfo>=bestVal)],y[(colInfo>=bestVal)],depth+1), strCond=f'Column {bestSplit} >= {bestVal}')
+            
+        self.depthCount[depth] = self.depthCount.get(depth, 0)+2
+        return [actualNode, oppositeNode]
+
+
+    def createcolTypes(self,X):
+        cols = []
+        for i in range(len(X[0])):
+            column = X[:,i].flatten()
+            if np.issubdtype(column.dtype, np.int_) or np.issubdtype(column.dtype, np.str_):
+                cols.append('cat')
+            else:
+                cols.append('num')
+        self.colTypes = cols
+
+    def fit(self,X,y, asm: str ='MSE'):
+        # X categorical Features must be passed as objects or ints
+        self.createcolTypes(X)
+        self.asm = (asm == 'MSE')
+        self.depthCount = {0:1}
+        self.model = Node(lambda x: True,self._fit(X,y.flatten(),1),strCond='Root')
+
+    def predict(self,val):
+        if len(val.shape)>1:
+            return [self.predict(val[i]) for i in range(val.shape[0])]
+        return self.model.predict(val)
+    
+    def drawTree(self, squareSize=100):
+        fig, ax = plt.subplots(figsize=(10,10))
+        self.sqrSz = squareSize
+        maxDepth = max(self.depthCount.keys())+1
+        maxAmplitude = max(self.depthCount.values())
+        self.depthCopy = self.depthCount.copy()
+        self.depthAmpSize = {}
+        for k,v in self.depthCount.items():
+            self.depthAmpSize[k] = (maxAmplitude*(3*self.sqrSz//2)-self.sqrSz*v)//(v+1)
+        ax.set_xlim(0, (maxAmplitude*(3*self.sqrSz//2)))
+        ax.set_ylim(self.sqrSz//2,(maxDepth*(3*self.sqrSz//2))+self.sqrSz//2)
+        self._drawTree(self.model,ax,0)
+        plt.show()
+
+    def _drawTree(self,node,ax,depth):
+
+        xPos = (self.depthCount[depth]-self.depthCopy[depth]+1)*(self.depthAmpSize[depth])
+        xPos += (self.depthCount[depth]-self.depthCopy[depth])*self.sqrSz
+        self.depthCopy[depth]-=1
+        yPos = depth*self.sqrSz+self.sqrSz//2*(depth+1)
+        coords = (xPos, yPos)
+        ax.add_patch(patches.Rectangle(coords,self.sqrSz,self.sqrSz,fill=True,color='blue' if isinstance(node,Node) else 'red'))
+        ax.text(xPos+self.sqrSz//2,yPos+self.sqrSz//2,node.strCond,ha='center',va='center')
+
+        if not isinstance(node,Leaf) and  not isinstance(node.next,Leaf):
+            for n in node.next:
+                newCoords = self._drawTree(n, ax, depth+1)
+                ax.plot([xPos+self.sqrSz//2, newCoords[0]+self.sqrSz//2], [yPos+self.sqrSz, newCoords[1]], color='black')
+        elif not isinstance(node, Leaf):
+            newCoords = self._drawTree(node.next,ax,depth+1)
+            ax.plot([xPos+self.sqrSz//2,newCoords[0]+self.sqrSz//2],[yPos+self.sqrSz,newCoords[1]],color='black')
+
+        return xPos,yPos
 
 # Prueba Clasificador Iris solo variables Númericas
 myClassifier = DecisionTreeClassifier(max_depth=5)
